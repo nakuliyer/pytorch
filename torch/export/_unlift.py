@@ -82,6 +82,41 @@ def _check_inputs_match(args, kwargs, in_spec: pytree.TreeSpec) -> list:
     return flat_args_with_path
 
 
+def _force_signature_match(guards_code: list[str], signature):
+    """
+    The signature of the originally exported module may not match
+    the signature of the unlifted graph module extraced from the
+    exported program. The guards code extracted from the exported
+    program is based on the former, but the generated guards fn is
+    based on the latter; thus we need to reconcile any such diff.
+    """
+
+    import re
+
+    # Handle case where signatures may differ in var args.
+    orig_arg_names = set()
+    for g in guards_code:
+        # match substrings of the form L['<name>'][<number>]
+        orig_arg_names.update(re.findall(r'L\[\'([^\']+)\'\]\[([0-9]+)\]', g))
+
+    sig_arg_names = set()
+    for n in signature.parameters:
+        # match substrings of the form <name>_<number>
+        sig_arg_names.update(re.findall(r'(.+)_([0-9]+)', n))
+
+    # replace L['<name>'][<number>] with L['<name>_<number>']
+    new_guards_code = guards_code
+    for match in orig_arg_names:
+        if match in sig_arg_names:
+            base, idx = match
+            new_guards_code = [
+                g.replace(f"L['{base}'][{idx}]", f"L['{base}_{idx}']")
+                for g in new_guards_code
+            ]
+
+    return new_guards_code
+
+
 def _convert_guards_code_to_fn(
     guards_code: list[str],
     paths_of_placeholders: list[pytree.KeyPath],
@@ -729,14 +764,13 @@ def _unlift_exported_program_lifted_states(
     graph = unlift_gm.graph
     placeholders = graph.find_nodes(op="placeholder")
     if check_guards and placeholders and ep.example_inputs:
-        input_paths = _get_input_paths(
-            ep.example_inputs,
-            inspect.signature(unlift_gm.forward),
-        )
+        unlift_gm_sig = inspect.signature(unlift_gm.forward)
+        input_paths = _get_input_paths(ep.example_inputs, unlift_gm_sig)
         guards_code = _get_input_guards_for_graph(
             placeholders, ep.range_constraints, input_paths
         )
-        guards_code.extend(ep._guards_code)
+        ep_guards_code = _force_signature_match(ep._guards_code, unlift_gm_sig)
+        guards_code.extend(ep_guards_code)
         unlift_gm._guards_fn = _convert_guards_code_to_fn(guards_code, input_paths)
 
         root_nn_module_stack = torch.fx._utils.first_call_function_nn_module_stack(
