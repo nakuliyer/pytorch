@@ -908,6 +908,14 @@ class TestFakeQuantize(TestCase):
         self.assertEqual(fq_module.activation_post_process.quant_min, 0)
         self.assertEqual(fq_module.activation_post_process.quant_max, 127)
 
+    @unittest.skipIf(not TEST_CUDA, "CUDA unavailable")
+    def test_fused_moving_avg_obs_fake_quant(self):
+        device = torch.device("cuda")
+        fake_quantize = FusedMovingAvgObsFakeQuantize()
+        fake_quantize.to(device)
+
+        fake_quantize.forward(torch.rand((256, 512), dtype=torch.bfloat16, device=device))
+
 def _get_buffer_ids(module):
     """
     Object addresses stay constant if and only if all modifications are in-place
