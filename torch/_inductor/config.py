@@ -1580,6 +1580,13 @@ class aot_inductor:
     # Whether to enable link-time-optimization
     enable_lto = os.environ.get("AOT_INDUCTOR_ENABLE_LTO", "0") == "1"
 
+    # Whether to compile the model with libtorch
+    # If doesn't want to compile with libtorch, an address to header
+    # must be provided for the compilation
+    # If there're multiple directories to include, separate by ,
+    use_libtorch: bool = True
+    libtorch_free_header: Optional[str] = None
+
 
 class cuda:
     """Settings for cuda backend, today this consists of cutlass"""

@@ -1086,13 +1086,22 @@ def _get_torch_related_args(
 ) -> tuple[list[str], list[str], list[str]]:
     from torch.utils.cpp_extension import include_paths, TORCH_LIB_PATH
 
-    include_dirs = include_paths()
-    libraries_dirs = [TORCH_LIB_PATH]
     libraries = []
-    if sys.platform != "darwin" and not config.is_fbcode():
-        libraries = ["torch", "torch_cpu"]
-        if not aot_mode:
-            libraries.append("torch_python")
+
+    if config.aot_inductor.use_libtorch:
+        include_dirs = include_paths()
+        libraries_dirs = [TORCH_LIB_PATH]
+        if sys.platform != "darwin" and not config.is_fbcode():
+            libraries = ["torch", "torch_cpu"]
+            if not aot_mode:
+                libraries.append("torch_python")
+    else:
+        if config.aot_inductor.libtorch_free_header is None:
+            raise RuntimeError(
+                "Must provide ot_inductor.libtorch_free_header config when aot_inductor.use_libtorch=False"
+            )
+        include_dirs = config.aot_inductor.libtorch_free_header.split(",")
+        libraries_dirs = []
 
     if _IS_WINDOWS:
         libraries.append("sleef")
@@ -1537,6 +1546,7 @@ def get_cpp_torch_device_options(
     device_type: str,
     aot_mode: bool = False,
     compile_only: bool = False,
+    use_torch: bool = True,
 ) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str], list[str]]:
     """
     This function is used to get the build args of device related build options.
@@ -1562,21 +1572,25 @@ def get_cpp_torch_device_options(
     _set_gpu_runtime_env()
     from torch.utils import cpp_extension
 
-    include_dirs = cpp_extension.include_paths(device_type)
-    libraries_dirs = cpp_extension.library_paths(device_type)
-    if not config.is_fbcode():
+    include_dirs = cpp_extension.include_paths(
+        device_type, torch_include_dirs=use_torch
+    )
+    libraries_dirs = cpp_extension.library_paths(
+        device_type, torch_include_dirs=use_torch
+    )
+    if not config.is_fbcode() and use_torch:
         libraries += ["c10"]
     if device_type == "cuda":
         definitions.append(" USE_ROCM" if torch.version.hip else " USE_CUDA")
 
         if torch.version.hip is not None:
-            if config.is_fbcode():
+            if config.is_fbcode() or not use_torch:
                 libraries += ["amdhip64"]
             else:
                 libraries += ["c10_hip", "torch_hip"]
             definitions.append(" __HIP_PLATFORM_AMD__")
         else:
-            if config.is_fbcode():
+            if config.is_fbcode() or not use_torch:
                 libraries += ["cuda"]
             else:
                 libraries += ["c10_cuda", "cuda", "torch_cuda"]
@@ -1680,6 +1694,8 @@ class CppTorchDeviceOptions(CppTorchOptions):
         device_libraries: list[str] = []
         device_passthrough_args: list[str] = []
 
+        use_torch = not aot_mode or config.aot_inductor.use_libtorch
+
         (
             device_definitions,
             device_include_dirs,
@@ -1689,7 +1705,10 @@ class CppTorchDeviceOptions(CppTorchOptions):
             device_libraries,
             device_passthrough_args,
         ) = get_cpp_torch_device_options(
-            device_type=device_type, aot_mode=aot_mode, compile_only=compile_only
+            device_type=device_type,
+            aot_mode=aot_mode,
+            compile_only=compile_only,
+            use_torch=use_torch,
         )
         _append_list(self._definitions, device_definitions)
         _append_list(self._include_dirs, device_include_dirs)
